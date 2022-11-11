@@ -1,0 +1,13 @@
+numpy==1.21.6
+scipy
+Pillow
+cython
+matplotlib
+scikit-image
+tensorflow==2.4.1
+keras==2.4.1
+opencv-python
+h5py==2.10
+imgaug
+IPython[all]
+pysvg-py3
