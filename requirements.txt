@@ -1,12 +1,5 @@
-numpy~=1.19.2
-scipy
-Pillow
-cython
 matplotlib
 scikit-image
-tensorflow-gpu==2.4.1
+tensorflow==2.9.1
 opencv-python
-h5py==2.10
-imgaug
-IPython[all]
 pysvg-py3
