@@ -11,6 +11,7 @@ import mrcnn.model as modellib
 from mrcnn import visualize
 from mrcnn.config import Config
 from vectoraizer.result_to_svg import result_to_svg
+import tensorflow as tf
 
 # Root directory of the project
 ROOT_DIR = os.path.abspath("./")
@@ -21,7 +22,7 @@ sys.path.append(ROOT_DIR)  # To find local version of the library
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
-COCO_MODEL_PATH = os.path.join(ROOT_DIR, "logs/mask_rcnn_shapes_0001.h5")
+COCO_MODEL_PATH = os.path.join(ROOT_DIR, "logs/colab_weights.h5")
 # Download COCO trained weights from Releases if needed
 if not os.path.exists(COCO_MODEL_PATH):
     utils.download_trained_weights(COCO_MODEL_PATH)
@@ -72,6 +73,9 @@ results = model.detect([image], verbose=1)
 
 # Visualize results
 r = results[0]
+
+tf.print("vectors:", r['vectors'])
+
 visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
                             class_names, r['scores'])
 result_to_svg(image, r['rois'], r['masks'], r['class_ids'])

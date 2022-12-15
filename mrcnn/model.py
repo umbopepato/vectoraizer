@@ -26,6 +26,9 @@ from tensorflow.python.eager import context
 import tensorflow.keras.models as KM
 
 from mrcnn import utils
+from vectoraizer.model import VectorsLayer
+
+
 ############################################################
 #  Utility Functions
 ############################################################
@@ -47,7 +50,7 @@ def log(text, array=None):
 
 
 def log_print(name, tensor):
-    print(name, "   shape:", tensor.shape, "   type:", tensor.dtype, 
+    print(name, "   shape:", tensor.shape, "   type:", tensor.dtype,
           "   min:", tf.math.reduce_min(tensor), "   max:", tf.math.reduce_max(tensor))
 
 class BatchNorm(KL.BatchNormalization):
@@ -435,7 +438,7 @@ class PyramidROIAlign(KL.Layer):
             # Here we use the simplified approach of a single value per bin,
             # which is how it's done in tf.crop_and_resize()
             # Result: [batch * num_boxes, pool_height, pool_width, channels]
-    
+
             # log_print("\n\ntf PyramidROIAlign crop and resize:\n", feature_maps[i])
             # log_print("tf PyramidROIAlign level_boxes:\n", level_boxes)
             # log_print("tf PyramidROIAlign box_indices:\n", box_indices)
@@ -1233,7 +1236,7 @@ def load_image_gt(dataset, config, image_id, augmentation=None, use_mini_mask=Fa
     """
     # Load image and mask
     image = dataset.load_image(image_id)
-    
+
     # if dataset.image_info[image_id]["source"] == "balloon":
     #     original_shape = np.array(image.size + (3,), dtype=np.int32)
     #     image, window, scale, padding = utils.resize_image(
@@ -1672,7 +1675,7 @@ def generate_random_rois(image_shape, count, gt_boxes):
 
 class DataGenerator(KU.Sequence):
     """An iterable that returns images and corresponding target class ids,
-    bounding box deltas, and masks. It inherits from keras.utils.Sequence 
+    bounding box deltas, and masks. It inherits from keras.utils.Sequence
     to avoid data redundancy when multiprocessing=True.
 
     dataset: The Dataset object to pick data from
@@ -1680,11 +1683,11 @@ class DataGenerator(KU.Sequence):
     shuffle: If True, shuffles the samples before every epoch
     augmentation: Optional. A list of imgaug (https://github.com/aleju/imgaug)
         augmentation. For example, passing [imgaug.augmenters.Fliplr(p=1.)]
-        will flip the images right/left 50% of the time. 
+        will flip the images right/left 50% of the time.
         Note: imgaug randomness is handle by the DataGenerator to ensure
             proper behaviour of tf.keras.utils.Sequence class. Therefore,
             do not use the probability values of imgaug. Uniform distribution
-            is applied accross [imgaug, skip aug]. 
+            is applied accross [imgaug, skip aug].
     random_rois: If > 0 then generate proposals to be used to train the
                     network classifier and mask heads. Useful if training
                     the Mask RCNN part without the RPN.
@@ -1709,7 +1712,7 @@ class DataGenerator(KU.Sequence):
     outputs list: Usually empty in regular training. But if detection_targets
         is True then the outputs list contains target class_ids, bbox deltas,
         and masks.
-    
+
     References how to refactor the DataGenerator to properly work in TF2:
         https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
         https://stackoverflow.com/questions/55852831/tf-data-vs-keras-utils-sequence-performance
@@ -1739,7 +1742,7 @@ class DataGenerator(KU.Sequence):
         self.batch_size = self.config.BATCH_SIZE
         self.detection_targets = detection_targets
 
-        # add skip 
+        # add skip
         if self.augmentations:
             self.augmentations.append(None)
 
@@ -1747,7 +1750,7 @@ class DataGenerator(KU.Sequence):
         return int(np.ceil(len(self.image_ids) / float(self.batch_size)))
 
     def on_epoch_end(self):
-        """Shuffle image_ids to ensure random 
+        """Shuffle image_ids to ensure random
         sampling of batches every epoch.
         """
         if self.shuffle:
@@ -1755,12 +1758,12 @@ class DataGenerator(KU.Sequence):
 
     def __getitem__(self, idx):
         # Note: model.fit(..., use_multiprocessing=True)
-        # pickles this object setting the object's 
+        # pickles this object setting the object's
         # generator to the same initial state every epoch.
-        # Use an independent generator breaking the chain.  
+        # Use an independent generator breaking the chain.
         np_random_genrator = np.random.default_rng()
 
-        # select the image_ids for the batch given the idx 
+        # select the image_ids for the batch given the idx
         # (every image_id will only be selected once if:
         # STEPS__PER_EPOCH == len(self))
         image_ids = self.image_ids[idx*self.batch_size:(idx+1)*self.batch_size]
@@ -1770,7 +1773,7 @@ class DataGenerator(KU.Sequence):
 
         for b, image_id in enumerate(image_ids):
             augmentation = np_random_genrator.choice(self.augmentations) \
-                if self.augmentations else self.augmentations 
+                if self.augmentations else self.augmentations
 
             image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
                 load_image_gt(self.dataset, self.config, image_id, augmentation=augmentation)
@@ -1791,7 +1794,7 @@ class DataGenerator(KU.Sequence):
                     rois, mrcnn_class_ids, mrcnn_bbox, mrcnn_mask = \
                         build_detection_targets(
                             rpn_rois, gt_class_ids, gt_boxes, gt_masks, self.config)
-    
+
             # Init batch arrays
             if b == 0:
                 batch_image_meta = np.zeros(
@@ -1996,7 +1999,7 @@ class MaskRCNN(object):
                     config = super().get_config()
                     config["x"] = self.x.numpy()
                     return config
-                    
+
             anchors = ConstLayer(anchors, name="anchors")(input_image)
         else:
             anchors = input_anchors
@@ -2105,15 +2108,15 @@ class MaskRCNN(object):
 
                 def train_step(self, data):
                     x, _ = data
-                    
+
                     if not config.USE_RPN_ROIS:
                         [_, _, input_rpn_match, input_rpn_bbox, _, _, _, _] = x
                     else:
                         [_, _, input_rpn_match, input_rpn_bbox, _, _, _] = x
-                        
+
                     with tf.GradientTape() as tape:
                         # forward pass
-                        [rpn_class_logits, rpn_bbox, 
+                        [rpn_class_logits, rpn_bbox,
                          target_class_ids, target_bbox, target_mask,
                          mrcnn_class_logits, mrcnn_bbox, mrcnn_mask,
                          active_class_ids] = self(x, training=True)
@@ -2131,7 +2134,7 @@ class MaskRCNN(object):
                         class_loss *= self.config.LOSS_WEIGHTS["mrcnn_class_loss"]
                         bbox_loss *= self.config.LOSS_WEIGHTS["mrcnn_bbox_loss"]
                         mask_loss *= self.config.LOSS_WEIGHTS["mrcnn_mask_loss"]
-                
+
                         combined_loss = tf.math.reduce_sum([rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss])
 
                         # # Add L2 Regularization
@@ -2140,10 +2143,10 @@ class MaskRCNN(object):
                             tf.keras.regularizers.l2(config.WEIGHT_DECAY)(w) / tf.cast(tf.size(input=w), tf.float32)
                             for w in self.trainable_weights
                             if 'gamma' not in w.name and 'beta' not in w.name])
-                        
+
                         # calculate the final loss
                         loss = tf.math.reduce_sum([combined_loss, reg_losses])
-                    
+
                     # Compute gradients
                     trainable_vars = self.trainable_variables
                     gradients = tape.gradient(loss, trainable_vars)
@@ -2162,22 +2165,22 @@ class MaskRCNN(object):
 
                 def test_step(self, data):
                     x, _ = data
-                    
+
                     if not config.USE_RPN_ROIS:
                         [_, _, input_rpn_match, input_rpn_bbox, _, _, _, _] = x
                     else:
                         [_, _, input_rpn_match, input_rpn_bbox, _, _, _] = x
 
-                    # forward pass 
-                    [rpn_class_logits, rpn_bbox, 
+                    # forward pass
+                    [rpn_class_logits, rpn_bbox,
                      target_class_ids, target_bbox, target_mask,
                      mrcnn_class_logits, mrcnn_bbox, mrcnn_mask,
                      active_class_ids] = self(x, training=False)
 
                     # calculate the partial losses
-                    rpn_class_loss = rpn_class_loss_graph(input_rpn_match, rpn_class_logits) 
-                    rpn_bbox_loss = rpn_bbox_loss_graph(self.config, input_rpn_bbox, input_rpn_match, rpn_bbox) 
-                    class_loss = mrcnn_class_loss_graph(target_class_ids, mrcnn_class_logits, active_class_ids) 
+                    rpn_class_loss = rpn_class_loss_graph(input_rpn_match, rpn_class_logits)
+                    rpn_bbox_loss = rpn_bbox_loss_graph(self.config, input_rpn_bbox, input_rpn_match, rpn_bbox)
+                    class_loss = mrcnn_class_loss_graph(target_class_ids, mrcnn_class_logits, active_class_ids)
                     bbox_loss = mrcnn_bbox_loss_graph(target_bbox, target_class_ids, mrcnn_bbox)
                     mask_loss = mrcnn_mask_loss_graph(target_mask, target_class_ids, mrcnn_mask)
 
@@ -2187,7 +2190,7 @@ class MaskRCNN(object):
                     class_loss *= self.config.LOSS_WEIGHTS["mrcnn_class_loss"]
                     bbox_loss *= self.config.LOSS_WEIGHTS["mrcnn_bbox_loss"]
                     mask_loss *= self.config.LOSS_WEIGHTS["mrcnn_mask_loss"]
-            
+
                     combined_loss = tf.math.reduce_sum([rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss])
 
                     # update metrics
@@ -2201,15 +2204,30 @@ class MaskRCNN(object):
                     return {name: m.result() for name, m in custom_metrics.items()}
 
             # Model
-            inputs = [input_image, input_image_meta, 
-                      input_rpn_match, input_rpn_bbox, 
-                      input_gt_class_ids, input_gt_boxes, input_gt_masks] 
+            inputs = [input_image, input_image_meta,
+                      input_rpn_match, input_rpn_bbox,
+                      input_gt_class_ids, input_gt_boxes, input_gt_masks]
             if not config.USE_RPN_ROIS:
                 inputs.append(input_rois)
-            outputs = [rpn_class_logits, rpn_bbox,
-                       target_class_ids, target_bbox, target_mask,
-                       mrcnn_class_logits, mrcnn_bbox, mrcnn_mask,
-                       active_class_ids]
+
+            detections = DetectionLayer(config, name="mrcnn_detection")(
+                [rpn_rois, mrcnn_class, mrcnn_bbox, input_image_meta])
+
+            vectors = VectorsLayer(config, name="vectors")([detections, mrcnn_mask, input_image_meta])
+
+            outputs = [
+                rpn_class_logits,    # [batch, H * W * anchors_per_location, 2] Anchor classifier logits (before softmax)
+                rpn_bbox,            # [batch, H * W * anchors_per_location, (dy, dx, log(dh), log(dw))] Deltas to be applied to anchors
+                target_class_ids,    # [batch, TRAIN_ROIS_PER_IMAGE] Integer class IDs
+                target_bbox,         # [batch, TRAIN_ROIS_PER_IMAGE, (dy, dx, log(dh), log(dw)]
+                target_mask,         # [batch, TRAIN_ROIS_PER_IMAGE, height, width] Masks cropped to bbox boundaries and resized to neural network output size
+                mrcnn_class_logits,  # [batch, num_rois, NUM_CLASSES] classifier logits (before softmax)
+                mrcnn_bbox,          # [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))] Deltas to apply to proposal boxes
+                mrcnn_mask,          # [batch, num_rois, MASK_POOL_SIZE, MASK_POOL_SIZE, NUM_CLASSES] Masks
+                active_class_ids,    # Class ID mask to mark class IDs supported by the dataset the image
+                vectors
+            ]
+            outputs = KL.Lambda(forward_to_vector_layers)(outputs)
             model = MaskRCNN_TF2(config=config, inputs=inputs, outputs=outputs, name='mask_rcnn')
 
         else:
@@ -2235,10 +2253,26 @@ class MaskRCNN(object):
                                               config.NUM_CLASSES,
                                               train_bn=config.TRAIN_BN)
 
-            model = KM.Model([input_image, input_image_meta, input_anchors],
-                             [detections, mrcnn_class, mrcnn_bbox,
-                                 mrcnn_mask, rpn_rois, rpn_class, rpn_bbox],
-                             name='mask_rcnn')
+            vectors = VectorsLayer(config, name="vectors")([detections, mrcnn_mask, input_image_meta])
+
+            model = KM.Model(
+                [
+                    input_image,
+                    input_image_meta,
+                    input_anchors
+                ],
+                [
+                    detections,  # [batch, num_detections, (y1, x1, y2, x2, class_id, class_score)] where coordinates are normalized
+                    mrcnn_class, # [batch, num_rois, NUM_CLASSES] classifier logits (before softmax)
+                    mrcnn_bbox,  # [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))] Deltas to apply to proposal boxes
+                    mrcnn_mask,  # [batch, num_rois, MASK_POOL_SIZE, MASK_POOL_SIZE, NUM_CLASSES] Masks
+                    rpn_rois,    # [batch, rois, (y1, x1, y2, x2)] Proposals in normalized coordinates
+                    rpn_class,   # [batch, H * W * anchors_per_location, 2] Anchor classifier probabilities
+                    rpn_bbox,     # [batch, H * W * anchors_per_location, (dy, dx, log(dh), log(dw))] Deltas to be applied to anchors
+                    vectors
+                ],
+                name='mask_rcnn'
+            )
 
         # Add multi-GPU support.
         if config.GPU_COUNT > 1:
@@ -2404,7 +2438,7 @@ class MaskRCNN(object):
 
     def train(self, train_dataset, val_dataset, learning_rate, epochs, layers,
               max_queue_size=5, worker=None, verbose=1,
-              augmentations=None, custom_callbacks=None, 
+              augmentations=None, custom_callbacks=None,
               no_augmentation_sources=None, use_multiprocessing=False):
         """Train the model.
         train_dataset, val_dataset: Training and validation Dataset objects.
@@ -2442,7 +2476,9 @@ class MaskRCNN(object):
 
         # Pre-defined layer regular expressions
         layer_regex = {
-            # all layers but the backbone
+            # Only vectorization layers
+            "vectors": r"vectors.*",
+            # All layers but the backbone
             "heads": r"(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
             # From a specific Resnet stage and up
             "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
@@ -2480,7 +2516,7 @@ class MaskRCNN(object):
         log("Checkpoint Path: {}".format(self.checkpoint_path))
         self.set_trainable(layers)
         optimizer = keras.optimizers.SGD(
-            learning_rate=learning_rate, 
+            learning_rate=learning_rate,
             momentum=self.config.LEARNING_MOMENTUM,
             clipnorm=self.config.GRADIENT_CLIP_NORM)
         self.keras_model.compile(optimizer=optimizer, run_eagerly=self.config.RUN_EAGERLY)
@@ -2506,7 +2542,7 @@ class MaskRCNN(object):
             max_queue_size=max_queue_size,
             workers=workers,
             verbose=verbose,
-            use_multiprocessing=use_multiprocessing 
+            use_multiprocessing=use_multiprocessing
         )
 
         self.epoch = max(self.epoch, epochs)
@@ -2656,7 +2692,7 @@ class MaskRCNN(object):
             log("image_metas", image_metas)
             log("anchors", anchors)
         # Run object detection
-        detections, _, _, mrcnn_mask, _, _, _ =\
+        detections, _, _, mrcnn_mask, _, _, _, vectors =\
             self.keras_model.predict([molded_images, image_metas, anchors], verbose=0)
         # Process detections
         results = []
@@ -2670,6 +2706,7 @@ class MaskRCNN(object):
                 "class_ids": final_class_ids,
                 "scores": final_scores,
                 "masks": final_masks,
+                "vectors": vectors[i]
             })
         return results
 
@@ -2754,7 +2791,7 @@ class MaskRCNN(object):
         return self._anchor_cache[tuple(image_shape)]
 
     # REMARK: KerasTensor.op is not possible anymore making
-    #   this function obsolete. 
+    #   this function obsolete.
     def ancestor(self, tensor, name, checked=None):
         """Finds the ancestor of a TF tensor in the computation graph.
         tensor: TensorFlow symbolic tensor.

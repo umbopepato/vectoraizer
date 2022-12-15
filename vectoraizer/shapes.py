@@ -2,7 +2,6 @@ import random
 from abc import abstractmethod
 from typing import Tuple
 import cv2
-
 import numpy as np
 
 
