@@ -3,6 +3,7 @@ from abc import abstractmethod
 from typing import Tuple
 import cv2
 import numpy as np
+import scipy
 
 
 def random_color():
@@ -21,7 +22,7 @@ class Shape:
     @abstractmethod
     def generate(image_width, image_height):
         """
-        Generate a random shape inside the image sizes
+        Generate a random shape within the image sizes
 
         Parameters
         ----------
@@ -44,6 +45,10 @@ class Shape:
         color : ndarray
         with_bbox : bool
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_normalized_params(self, scale, padding, crop):
         raise NotImplementedError
 
     def draw_bbox(self, canvas):
@@ -76,6 +81,10 @@ class Ellipse(Shape):
         self.cy = cy
         self.rx = rx
         self.ry = ry
+        self.cx_norm = cx
+        self.cy_norm = cy
+        self.rx_norm = rx
+        self.ry_norm = ry
         # self.rot = rot TODO
         self.bounding_box = (cx - rx, cy - ry, rx * 2, ry * 2)
         self.fill_color = random_color()
@@ -109,6 +118,15 @@ class Ellipse(Shape):
             self.draw_bbox(canvas)
         return canvas
 
+    def get_normalized_params(self, scale, padding, crop=None):
+        cx_norm = self.cx * scale
+        cy_norm = self.cy * scale
+        rx_norm = self.rx * scale
+        ry_norm = self.ry * scale
+        if crop is None:
+            cx_norm = padding[0][0] + cx_norm
+            cy_norm = padding[1][0] + cy_norm
+        return [cx_norm, cy_norm, rx_norm, ry_norm]
 
 class Rectangle(Shape):
     """
@@ -130,6 +148,10 @@ class Rectangle(Shape):
         self.y = y
         self.width = width
         self.height = height
+        self.x_norm = x
+        self.y_norm = y
+        self.width_norm = width
+        self.height_norm = height
         # self.rot = rot TODO
         self.bounding_box = (x, y, width, height)
         self.fill_color = random_color()
@@ -160,6 +182,16 @@ class Rectangle(Shape):
             self.draw_bbox(canvas)
         return canvas
 
+    def get_normalized_params(self, scale, padding, crop=None):
+        x_norm = self.x * scale
+        y_norm = self.y * scale
+        width_norm = self.width * scale
+        height_norm = self.height * scale
+        if crop is None:
+            x_norm = padding[0][0] + self.x
+            y_norm = padding[1][0] + self.y
+        return [x_norm, y_norm, width_norm, height_norm]
+
 
 class Path(Shape):
     """
@@ -181,6 +213,9 @@ class Path(Shape):
         maxy = np.max(vertices[:, 1])
         self.bounding_box = (minx, miny, maxx - minx, maxy - miny)
         self.fill_color = random_color()
+
+    def get_normalized_params(self, scale, padding, crop):
+        return self.vertices
 
     def is_closed(self):
         # TODO

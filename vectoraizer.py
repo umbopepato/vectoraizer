@@ -13,6 +13,8 @@ from mrcnn.config import Config
 from vectoraizer.result_to_svg import result_to_svg
 import tensorflow as tf
 
+print('Tensorflow version: {}'.format(tf.__version__))
+
 # Root directory of the project
 ROOT_DIR = os.path.abspath("./")
 
@@ -43,6 +45,7 @@ class InferenceConfig(Config):
     TRAIN_ROIS_PER_IMAGE = 32
     STEPS_PER_EPOCH = 100
     VALIDATION_STEPS = 5
+    RUN_EAGERLY = True
 
 
 config = InferenceConfig()
@@ -76,6 +79,6 @@ r = results[0]
 
 tf.print("vectors:", r['vectors'])
 
-visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
-                            class_names, r['scores'])
-result_to_svg(image, r['rois'], r['masks'], r['class_ids'])
+# visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
+#                             class_names, r['scores'])
+# result_to_svg(image, r['rois'], r['masks'], r['class_ids'])
