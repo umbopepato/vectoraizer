@@ -52,11 +52,11 @@ class Shape:
         raise NotImplementedError
 
     def draw_bbox(self, canvas):
-        x, y, width, height = self.bounding_box
+        y1, x1, y2, x2 = self.bounding_box
         cv2.rectangle(
             canvas,
-            (x, y),
-            (x + width, y + height),
+            (x1, y1),
+            (x2, y2),
             (255, 0, 0),
         )
 
@@ -67,6 +67,7 @@ class Ellipse(Shape):
     """
 
     name = 'ellipse'
+    class_id = 2
 
     def __init__(self, cx, cy, rx, ry):
         """
@@ -86,7 +87,7 @@ class Ellipse(Shape):
         self.rx_norm = rx
         self.ry_norm = ry
         # self.rot = rot TODO
-        self.bounding_box = (cx - rx, cy - ry, rx * 2, ry * 2)
+        self.bounding_box = (cy - ry, cx - rx, cy + ry, cx + rx)
         self.fill_color = random_color()
 
     def is_circle(self):
@@ -126,7 +127,7 @@ class Ellipse(Shape):
         if crop is None:
             cx_norm = padding[0][0] + cx_norm
             cy_norm = padding[1][0] + cy_norm
-        return [cx_norm, cy_norm, rx_norm, ry_norm]
+        return [self.class_id], self.bounding_box#, np.array([cx_norm, cy_norm, rx_norm, ry_norm], dtype=np.int32)
 
 class Rectangle(Shape):
     """
@@ -134,6 +135,7 @@ class Rectangle(Shape):
     """
 
     name = 'rect'
+    class_id = 1
 
     def __init__(self, x, y, width, height):
         """
@@ -153,7 +155,7 @@ class Rectangle(Shape):
         self.width_norm = width
         self.height_norm = height
         # self.rot = rot TODO
-        self.bounding_box = (x, y, width, height)
+        self.bounding_box = (y, x, y + height, x + width)
         self.fill_color = random_color()
 
     def is_square(self):
@@ -190,7 +192,7 @@ class Rectangle(Shape):
         if crop is None:
             x_norm = padding[0][0] + self.x
             y_norm = padding[1][0] + self.y
-        return [x_norm, y_norm, width_norm, height_norm]
+        return [self.class_id], self.bounding_box#, np.array(self.bounding_box)
 
 
 class Path(Shape):
@@ -199,6 +201,7 @@ class Path(Shape):
     """
 
     name = 'path'
+    class_id = 3
 
     def __init__(self, vertices):
         """
@@ -211,11 +214,11 @@ class Path(Shape):
         miny = np.min(vertices[:, 1])
         maxx = np.max(vertices[:, 0])
         maxy = np.max(vertices[:, 1])
-        self.bounding_box = (minx, miny, maxx - minx, maxy - miny)
+        self.bounding_box = (miny, minx, maxy, maxx)
         self.fill_color = random_color()
 
     def get_normalized_params(self, scale, padding, crop):
-        return self.vertices
+        return [self.class_id], self.bounding_box#, self.vertices.reshape([-1])
 
     def is_closed(self):
         # TODO

@@ -17,6 +17,7 @@ import numpy as np
 
 from collections import OrderedDict
 
+import skimage.color
 import tensorflow as tf
 import tensorflow.keras as keras
 import tensorflow.keras.backend as K
@@ -25,9 +26,9 @@ import tensorflow.keras.utils as KU
 from tensorflow.python.eager import context
 import tensorflow.keras.models as KM
 
-from mrcnn import utils
-from mrcnn.utils import unmold_detections
-from vectoraizer.model import VectorsLayer
+from mrcnn import utils, visualize
+from mrcnn.utils import unmold_detections, smooth_l1_loss
+from vectoraizer.model import VectorsLayer, vectors_loss_graph
 
 
 ############################################################
@@ -1054,15 +1055,6 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
 #  Loss Layers
 ############################################################
 
-def smooth_l1_loss(y_true, y_pred):
-    """Implements Smooth-L1 loss.
-    y_true and y_pred are typically: [N, 4], but could be any shape.
-    """
-    diff = K.abs(y_true - y_pred)
-    less_than_one = K.cast(K.less(diff, 1.0), "float32")
-    loss = (less_than_one * 0.5 * diff**2) + (1 - less_than_one) * (diff - 0.5)
-    return loss
-
 def rpn_class_loss_graph(rpn_match, rpn_class_logits):
     """RPN anchor classifier loss.
 
@@ -1226,7 +1218,7 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
 #  Data Generator
 ############################################################
 
-def load_image_gt(dataset, config, image_id, augmentation=None, use_mini_mask=False):
+def load_image_gt(dataset, config, image_id, augmentation=None, use_mini_mask=False, log_dir=None):
     """Load and return ground truth data for an image (image, mask, bounding boxes).
 
     augmentation: Optional. An imgaug (https://github.com/aleju/imgaug) augmentation.
@@ -1244,6 +1236,12 @@ def load_image_gt(dataset, config, image_id, augmentation=None, use_mini_mask=Fa
     """
     # Load image and mask
     image = dataset.load_image(image_id)
+
+    # print('Using log dir {}'.format(log_dir))
+    # if log_dir is not None:
+    #     file_writer = tf.summary.create_file_writer(log_dir)
+    #     with file_writer.as_default():
+    #         tf.summary.image("Training image", [tf.expand_dims(skimage.color.rgb2gray(skimage.transform.resize(image, (28, 28))), -1)], step=0)
 
     # if dataset.image_info[image_id]["source"] == "balloon":
     #     original_shape = np.array(image.size + (3,), dtype=np.int32)
@@ -1327,11 +1325,17 @@ def load_image_gt(dataset, config, image_id, augmentation=None, use_mini_mask=Fa
                                     window, scale, active_class_ids)
 
     shapes = dataset.image_info[image_id]['shapes']
+    shapes_classes = []
+    shapes_bboxes = []
     shapes_params = []
     for shape in shapes:
-        shapes_params.append(shape.get_normalized_params(scale, padding, crop))
+        shape_class, shape_bbox = shape.get_normalized_params(scale, padding, crop)
+        shapes_classes.append(shape_class)
+        shapes_bboxes.append(shape_bbox)
+        # shapes_params.append(shape_params)
+        # print(shape, shape_class, shape_bbox, shape_params)
 
-    return image, image_meta, class_ids, bbox, mask.astype(np.bool), shapes_params
+    return image, image_meta, class_ids, bbox, mask.astype(np.bool), (shapes_classes, shapes_bboxes)#, shapes_params)
 
 
 def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
@@ -1734,11 +1738,12 @@ class DataGenerator(KU.Sequence):
     """
 
     def __init__(self, dataset, config, shuffle=True, augmentations=None,
-                 random_rois=0, detection_targets=False):
+                 random_rois=0, detection_targets=False, log_dir=None):
 
         self.image_ids = np.copy(dataset.image_ids)
         self.dataset = dataset
         self.config = config
+        self.log_dir = log_dir
 
         # Anchors
         # [anchor_count, (y1, x1, y2, x2)]
@@ -1789,7 +1794,9 @@ class DataGenerator(KU.Sequence):
                 if self.augmentations else self.augmentations
 
             image, image_meta, gt_class_ids, gt_boxes, gt_masks, shapes = \
-                load_image_gt(self.dataset, self.config, image_id, augmentation=augmentation)
+                load_image_gt(self.dataset, self.config, image_id, augmentation=augmentation, log_dir=self.log_dir)
+
+            # visualize.display_instances(image, gt_boxes, gt_masks, gt_class_ids, ['bg', 'rect', 'ellipse', 'path'])
 
             # Follow the restiriction to enable proper use_multiplrocessing=True workflow
             assert np.any(gt_class_ids > 0), "Unlabeled data is not supported: "\
@@ -1825,7 +1832,7 @@ class DataGenerator(KU.Sequence):
                 batch_gt_masks = np.zeros(
                     (self.batch_size, gt_masks.shape[0], gt_masks.shape[1],
                      self.config.MAX_GT_INSTANCES), dtype=gt_masks.dtype)
-                batch_gt_shapes = [''] * self.batch_size
+                batch_gt_shapes = [None] * self.batch_size
                 if self.random_rois:
                     batch_rpn_rois = np.zeros(
                         (self.batch_size, rpn_rois.shape[0], 4), dtype=rpn_rois.dtype)
@@ -1855,7 +1862,7 @@ class DataGenerator(KU.Sequence):
             batch_gt_class_ids[b, :gt_class_ids.shape[0]] = gt_class_ids
             batch_gt_boxes[b, :gt_boxes.shape[0]] = gt_boxes
             batch_gt_masks[b, :, :, :gt_masks.shape[-1]] = gt_masks
-            batch_gt_shapes[b] = str(shapes)
+            batch_gt_shapes[b] = shapes
             if self.random_rois:
                 batch_rpn_rois[b] = rpn_rois
                 if self.detection_targets:
@@ -1864,8 +1871,10 @@ class DataGenerator(KU.Sequence):
                     batch_mrcnn_bbox[b] = mrcnn_bbox
                     batch_mrcnn_mask[b] = mrcnn_mask
 
+        # print('batch_gt_shapes for image idx: {} and image ids: {} -> {}'.format(idx, image_ids, batch_gt_shapes))
+
         inputs = [batch_images, batch_image_meta, batch_rpn_match, batch_rpn_bbox,
-                  batch_gt_class_ids, batch_gt_boxes, batch_gt_masks, tf.convert_to_tensor(batch_gt_shapes)]
+                  batch_gt_class_ids, batch_gt_boxes, batch_gt_masks, tf.ragged.constant(batch_gt_shapes)]
         outputs = []
 
         if self.random_rois:
@@ -1941,7 +1950,7 @@ class MaskRCNN(object):
             input_gt_boxes = KL.Input(
                 shape=[None, 4], name="input_gt_boxes", dtype=tf.float32)
 
-            input_gt_shapes = KL.Input(shape=[None], name="input_gt_shapes", dtype=tf.string)
+            input_gt_shapes = KL.Input(shape=[None], name="input_gt_shapes", dtype=tf.int32, ragged=True)
 
             # Normalize coordinates
             # gt_boxes = KL.Lambda(lambda x: norm_boxes_graph(
@@ -2103,6 +2112,7 @@ class MaskRCNN(object):
             class_loss_metric = tf.keras.metrics.Mean(name="class_loss")
             bbox_loss_metric = tf.keras.metrics.Mean(name="bbox_loss")
             mask_loss_metric = tf.keras.metrics.Mean(name="mask_loss")
+            vectors_loss_metric = tf.keras.metrics.Mean(name="vectors_loss")
             custom_metrics = {
                 "loss": loss_metric,
                 "rpn_class_loss": rpn_class_loss_metric,
@@ -2110,6 +2120,7 @@ class MaskRCNN(object):
                 "mrcnn_class_loss": class_loss_metric,
                 "mrcnn_bbox_loss": bbox_loss_metric,
                 "mrcnn_mask_loss": mask_loss_metric,
+                "vectors_loss": vectors_loss_metric,
             }
 
             class MaskRCNN_TF2(tf.keras.Model):
@@ -2128,20 +2139,14 @@ class MaskRCNN(object):
 
                 def train_step(self, data):
                     x, _ = data
-
-                    if not config.USE_RPN_ROIS:
-                        [_, _, input_rpn_match, input_rpn_bbox, _, _, _, input_shapes] = x
-                    else:
-                        [_, _, input_rpn_match, input_rpn_bbox, _, _, _, input_shapes] = x
-
-                    print('Shapes: {}'.format(input_shapes))
+                    [_, _image_meta, input_rpn_match, input_rpn_bbox, _, _, _, input_shapes] = x
 
                     with tf.GradientTape() as tape:
                         # forward pass
                         [rpn_class_logits, rpn_bbox,
                          target_class_ids, target_bbox, target_mask,
                          mrcnn_class_logits, mrcnn_bbox, mrcnn_mask,
-                         active_class_ids, vectors] = self(x, training=True)
+                         active_class_ids, vectors, detections] = self(x, training=True)
 
                         # calculate the partial losses
                         rpn_class_loss = rpn_class_loss_graph(input_rpn_match, rpn_class_logits)
@@ -2149,6 +2154,7 @@ class MaskRCNN(object):
                         class_loss = mrcnn_class_loss_graph(target_class_ids, mrcnn_class_logits, active_class_ids)
                         bbox_loss = mrcnn_bbox_loss_graph(target_bbox, target_class_ids, mrcnn_bbox)
                         mask_loss = mrcnn_mask_loss_graph(target_mask, target_class_ids, mrcnn_mask)
+                        vectors_loss = vectors_loss_graph(detections, target_mask, vectors)
 
                         # add the weighting factors
                         rpn_class_loss *= self.config.LOSS_WEIGHTS["rpn_class_loss"]
@@ -2157,7 +2163,7 @@ class MaskRCNN(object):
                         bbox_loss *= self.config.LOSS_WEIGHTS["mrcnn_bbox_loss"]
                         mask_loss *= self.config.LOSS_WEIGHTS["mrcnn_mask_loss"]
 
-                        combined_loss = tf.math.reduce_sum([rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss])
+                        combined_loss = tf.math.reduce_sum([rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss, vectors_loss])
 
                         # # Add L2 Regularization
                         # Skip gamma and beta weights of batch normalization layers.
@@ -2182,22 +2188,20 @@ class MaskRCNN(object):
                     custom_metrics["mrcnn_class_loss"].update_state(class_loss)
                     custom_metrics["mrcnn_bbox_loss"].update_state(bbox_loss)
                     custom_metrics["mrcnn_mask_loss"].update_state(mask_loss)
+                    custom_metrics["vectors_loss"].update_state(vectors_loss)
 
                     return {name: m.result() for name, m in custom_metrics.items()}
 
                 def test_step(self, data):
                     x, _ = data
 
-                    if not config.USE_RPN_ROIS:
-                        [_, _, input_rpn_match, input_rpn_bbox, _, _, _, input_shapes, _] = x
-                    else:
-                        [_, _, input_rpn_match, input_rpn_bbox, _, _, _, input_shapes] = x
+                    [_, _, input_rpn_match, input_rpn_bbox, _, _, _, input_shapes] = x
 
                     # forward pass
                     [rpn_class_logits, rpn_bbox,
                      target_class_ids, target_bbox, target_mask,
                      mrcnn_class_logits, mrcnn_bbox, mrcnn_mask,
-                     active_class_ids, vectors] = self(x, training=False)
+                     active_class_ids, vectors, detections] = self(x, training=False)
 
                     # calculate the partial losses
                     rpn_class_loss = rpn_class_loss_graph(input_rpn_match, rpn_class_logits)
@@ -2205,6 +2209,7 @@ class MaskRCNN(object):
                     class_loss = mrcnn_class_loss_graph(target_class_ids, mrcnn_class_logits, active_class_ids)
                     bbox_loss = mrcnn_bbox_loss_graph(target_bbox, target_class_ids, mrcnn_bbox)
                     mask_loss = mrcnn_mask_loss_graph(target_mask, target_class_ids, mrcnn_mask)
+                    vectors_loss = vectors_loss_graph(detections, target_mask, vectors)
 
                     # add the weighting factors
                     rpn_class_loss *= self.config.LOSS_WEIGHTS["rpn_class_loss"]
@@ -2213,7 +2218,7 @@ class MaskRCNN(object):
                     bbox_loss *= self.config.LOSS_WEIGHTS["mrcnn_bbox_loss"]
                     mask_loss *= self.config.LOSS_WEIGHTS["mrcnn_mask_loss"]
 
-                    combined_loss = tf.math.reduce_sum([rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss])
+                    combined_loss = tf.math.reduce_sum([rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss, vectors_loss])
 
                     # update metrics
                     custom_metrics["loss"].update_state(combined_loss)
@@ -2222,6 +2227,7 @@ class MaskRCNN(object):
                     custom_metrics["mrcnn_class_loss"].update_state(class_loss)
                     custom_metrics["mrcnn_bbox_loss"].update_state(bbox_loss)
                     custom_metrics["mrcnn_mask_loss"].update_state(mask_loss)
+                    custom_metrics["vectors_loss"].update_state(vectors_loss)
 
                     return {name: m.result() for name, m in custom_metrics.items()}
 
@@ -2248,7 +2254,8 @@ class MaskRCNN(object):
                 mrcnn_bbox,          # [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))] Deltas to apply to proposal boxes
                 mrcnn_mask,          # [batch, num_rois, MASK_POOL_SIZE, MASK_POOL_SIZE, NUM_CLASSES] Masks
                 active_class_ids,    # Class ID mask to mark class IDs supported by the dataset the image
-                vectors
+                vectors,
+                detections
             ]
             model = MaskRCNN_TF2(config=config, inputs=inputs, outputs=outputs, name='mask_rcnn')
 
@@ -2514,8 +2521,8 @@ class MaskRCNN(object):
 
         # Data generators
         train_generator = DataGenerator(train_dataset, self.config, shuffle=True,
-                                        augmentations=augmentations)
-        val_generator = DataGenerator(val_dataset, self.config, shuffle=False)
+                                        augmentations=augmentations, log_dir=self.log_dir)
+        val_generator = DataGenerator(val_dataset, self.config, shuffle=False, log_dir=self.log_dir)
 
         # Create log_dir if it does not exist
         if not os.path.exists(self.log_dir):

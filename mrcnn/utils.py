@@ -20,6 +20,8 @@ import urllib.request
 import shutil
 import warnings
 from distutils.version import LooseVersion
+import tensorflow.keras.backend as K
+import tensorflow.keras.layers as KL
 
 # URL from which to download the latest COCO trained weights
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
@@ -75,6 +77,28 @@ def compute_iou(box, boxes, box_area, boxes_area):
     iou = intersection / union
     return iou
 
+def ragged_slice(tensor, axis):
+    return tf.gather_nd(tensor, tf.pad(tf.expand_dims(tf.range(tf.shape(tensor)[0]), -1), [[0, 0], [0, 1]], constant_values=axis))
+
+def compute_iou_graph(box, boxes, box_area, boxes_area):
+    """Calculates IoU of the given box with the array of the given boxes.
+    box: 1D vector [y1, x1, y2, x2]
+    boxes: [boxes_count, (y1, x1, y2, x2)]
+    box_area: float. the area of 'box'
+    boxes_area: array of length boxes_count.
+
+    Note: the areas are passed in rather than calculated here for
+    efficiency. Calculate once in the caller to avoid duplicate work.
+    """
+    # Calculate intersection areas
+    y1 = tf.maximum(box[0], boxes[:, 0])
+    y2 = tf.minimum(box[2], boxes[:, 2])
+    x1 = tf.maximum(box[1], boxes[:, 1])
+    x2 = tf.minimum(box[3], boxes[:, 3])
+    intersection = tf.maximum(x2 - x1, 0) * tf.maximum(y2 - y1, 0)
+    union = box_area + boxes_area[:] - intersection[:]
+    iou = intersection / union
+    return iou
 
 def compute_overlaps(boxes1, boxes2):
     """Computes IoU overlaps between two sets of boxes.
@@ -511,6 +535,16 @@ def resize_mask(mask, scale, padding, crop=None):
     return mask
 
 
+def smooth_l1_loss(y_true, y_pred):
+    """Implements Smooth-L1 loss.
+    y_true and y_pred are typically: [N, 4], but could be any shape.
+    """
+    diff = K.abs(y_true - y_pred)
+    less_than_one = K.cast(K.less(diff, 1.0), "float32")
+    loss = (less_than_one * 0.5 * diff**2) + (1 - less_than_one) * (diff - 0.5)
+    return loss
+
+
 def minimize_mask(bbox, mask, mini_shape):
     """Resize masks to a smaller version to reduce memory load.
     Mini-masks can be resized back to image scale using expand_masks()
@@ -582,12 +616,9 @@ def unmold_mask_graph(mask, bbox, image_shape):
     """
     threshold = 0.5
     mask = resize_graph(mask, (bbox[2] - bbox[0], bbox[3] - bbox[1]))
-    mask = tf.cast(tf.where(mask >= threshold, 1, 0), tf.bool)
+    mask = tf.where(mask >= threshold, 1., 0.)
 
-    # Put the mask in the right location.
-    full_mask = tf.zeros(image_shape[:2], dtype=tf.bool)
-    indices = tf.stack([tf.range(bbox[0], bbox[2]), tf.range(bbox[1], bbox[3])], axis=-1)
-    return tf.tensor_scatter_nd_update(full_mask, indices, mask)
+    return tf.squeeze(tf.image.pad_to_bounding_box(mask, bbox[0], bbox[1], image_shape[0], image_shape[1]))
 
 
 ############################################################
@@ -923,8 +954,7 @@ def resize(image, output_shape, order=1, mode='constant', cval=0, clip=True,
 
 def resize_graph(image, size):
     image = tf.expand_dims(image, axis=-1)
-    resized = tf.image.resize(image, size)
-    return tf.squeeze(resized)
+    return tf.image.resize(image, size)
 
 def unmold_detections(detections, mrcnn_mask, original_image_shape,
                       image_shape, window):
@@ -1017,67 +1047,73 @@ def unmold_detections_graph(detections, mrcnn_mask, original_image_shape,
     scores: [N] Float probability scores of the class_id
     masks: [height, width, num_instances] Instance masks
     """
-    original_image_shape = tf.cast(original_image_shape, tf.int32)
-
     # How many detections do we have?
     # Detections array is padded with zeros. Find the first class_id == 0.
     zero_ix = tf.where(detections[:, 4] == 0)[0]
-    N = zero_ix[0] if zero_ix.shape[0] > 0 else detections.shape[0]
+    N = tf.shape(mrcnn_mask)[0] # zero_ix[0] if zero_ix.shape[0] > 0 else detections.shape[0]
+
+    print('N: {}'.format(N))
 
     # Extract boxes, class_ids, scores, and class-specific masks
     boxes = tf.reshape(detections[:N, :4], [N, 4])
     class_ids = tf.cast(detections[:N, 4], tf.int32)
     scores = detections[:N, 5]
-    mask_indexes = tf.range(N)
-    mask_indexes = tf.reshape(mask_indexes, [tf.shape(mask_indexes)[0], 1])
-    masks = tf.gather_nd(mrcnn_mask, mask_indexes)
-    masks_shape = tf.shape(masks)
+    # mask_indexes = tf.range(N)
+    # mask_indexes = tf.reshape(mask_indexes, [tf.shape(mask_indexes)[0], 1])
+    # masks = tf.gather_nd(mrcnn_mask, mask_indexes)
+    # masks_shape = tf.shape(masks)
     # masks_shape = tf.tensor_scatter_nd_update(masks_shape, [[3]], [1])
-    masks = tf.gather(masks, class_ids, axis=3)
-    masks = tf.reshape(tf.squeeze(masks), masks_shape[:3])
+    # masks = tf.gather(masks, class_ids, axis=3)
 
-    # masks_shape = tf.shape(mrcnn_mask)
-    # ij = tf.stack(tf.meshgrid(
-    #     tf.range(masks_shape[1], dtype=tf.int64),
-    #     tf.range(masks_shape[2], dtype=tf.int64),
-    #     indexing='ij'), axis=-1)
-    # masks = tf.map_fn(lambda x: x[0][x[1]], (masks, class_ids))
+    masks = tf.map_fn(
+        lambda x: tf.where(x[0][:,:,class_ids[x[1]]] > 0.5, 1., 0.),
+        (mrcnn_mask, tf.range(tf.shape(mrcnn_mask)[0])),
+        fn_output_signature=tf.float32
+    )
 
     # Translate normalized coordinates in the resized image to pixel
     # coordinates in the original image before resizing
-    window = norm_boxes(window, image_shape[:2])
-    wy1 = window[0]
-    wx1 = window[1]
-    wy2 = window[2]
-    wx2 = window[3]
-    shift = [wy1, wx1, wy1, wx1]
-    wh = wy2 - wy1  # window height
-    ww = wx2 - wx1  # window width
-    scale = [wh, ww, wh, ww]
-    # Convert boxes to normalized coordinates on the window
-    boxes = tf.divide(boxes - shift, scale)
-    # Convert boxes to pixel coordinates on the original image
-    boxes = denorm_boxes(boxes, original_image_shape[:2])
+    # window = norm_boxes(window, image_shape[:2])
+    # wy1 = window[0]
+    # wx1 = window[1]
+    # wy2 = window[2]
+    # wx2 = window[3]
+    # shift = [wy1, wx1, wy1, wx1]
+    # wh = wy2 - wy1  # window height
+    # ww = wx2 - wx1  # window width
+    # scale = [wh, ww, wh, ww]
+    # # Convert boxes to normalized coordinates on the window
+    # boxes = tf.divide(boxes - shift, scale)
+    # # Convert boxes to pixel coordinates on the original image
+    # boxes = denorm_boxes(boxes, original_image_shape[:2])
 
     # Filter out detections with zero area. Happens in early training when
     # network weights are still random
-    include_ixs = tf.where(
-        (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) >= 0)
-
-    if tf.shape(include_ixs)[0] > 0:
-        class_ids = tf.gather_nd(class_ids, include_ixs)
-        boxes = tf.gather_nd(boxes, include_ixs)
-        scores = tf.gather_nd(scores, include_ixs)
-        masks = tf.gather_nd(masks, include_ixs)
-        N = tf.cast(tf.shape(class_ids)[0], tf.int64)
+    # include_ixs = tf.where(
+    #     (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) >= 0)
+    #
+    # if tf.shape(include_ixs)[0] > 0:
+    #     class_ids = tf.gather_nd(class_ids, include_ixs)
+    #     boxes = tf.gather_nd(boxes, include_ixs)
+    #     scores = tf.gather_nd(scores, include_ixs)
+    #     masks = tf.gather_nd(masks, include_ixs)
+    #     N = tf.cast(tf.shape(class_ids)[0], tf.int64)
 
     # Resize masks to original image size and set boundary threshold.
-    full_masks = tf.TensorArray(dtype=tf.bool, size=1, dynamic_size=True, clear_after_read=False)
-    for i in range(N):
+    # full_masks = tf.TensorArray(dtype=tf.int32, size=1, dynamic_size=True, clear_after_read=False, infer_shape=False, element_shape=original_image_shape)
+    # for i in range(N):
         # Convert neural network mask to full size mask
-        full_mask = unmold_mask_graph(masks[i], boxes[i], original_image_shape)
-        full_masks = full_masks.write(full_masks.size(), full_mask)
-    full_masks = full_masks.stack() \
-        if full_masks else tf.zeros(original_image_shape[:2] + (0,), dtype=tf.int32)
+        # full_mask = unmold_mask_graph(masks[i], boxes[i], original_image_shape)
+        # full_masks = full_masks.write(full_masks.size(), full_mask)
+    # if full_masks.size() > 0:
+    # full_masks = full_masks.concat()
+    # else:
+    #     full_masks = tf.zeros(original_image_shape[:2] + (0,), dtype=tf.int32)
 
-    return boxes, class_ids, scores, full_masks
+    # full_masks = tf.map_fn(
+    #     lambda x: unmold_mask_graph(x[0], x[1], original_image_shape),
+    #     (masks, boxes),
+    #     fn_output_signature=tf.TensorSpec([original_image_shape[0], original_image_shape[1]], tf.float32)
+    # )
+
+    return boxes, class_ids, scores, masks, N

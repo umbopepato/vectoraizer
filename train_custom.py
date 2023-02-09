@@ -30,7 +30,7 @@ COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
 # Download COCO trained weights from Releases if needed
 if not os.path.exists(COCO_MODEL_PATH):
     utils.download_trained_weights(COCO_MODEL_PATH)
-    
+
 class CustomConfig(Config):
     """Configuration for training on the toy shapes dataset.
     Derives from the base Config class and overrides values specific
@@ -64,7 +64,7 @@ class CustomConfig(Config):
 
     # use small validation steps since the epoch is small
     VALIDATION_STEPS = 5
-    
+
 config = CustomConfig()
 config.display()
 
@@ -72,18 +72,18 @@ def get_ax(rows=1, cols=1, size=8):
     """Return a Matplotlib Axes array to be used in
     all visualizations in the notebook. Provide a
     central point to control graph sizes.
-    
+
     Change the default size attribute to control the size
     of rendered images
     """
     _, ax = plt.subplots(rows, cols, figsize=(size*cols, size*rows))
     return ax
-    
+
 class CustomDataset(utils.Dataset):
-    
+
     w = 128
     h = 128
-    
+
     def load_imgs(self, base_dir):
         """Generate the requested number of synthetic images.
         count: number of images to generate.
@@ -91,15 +91,15 @@ class CustomDataset(utils.Dataset):
         """
         # Add classes
         self.add_class("shapes", 1, "food")
-        
+
         img_path = os.path.join(base_dir, "imgs")
-        
+
         mask_path = os.path.join(base_dir, "masks")
 
         for i, filename in enumerate(glob.glob(img_path + '/*.jpg')):
-            
+
             name = os.path.splitext(os.path.basename(filename))[0]
-            
+
             # img = imread(filename)
             # h,w = img.shape[:2]
             self.add_image("shapes", image_id=i, path=filename, class_="food",
@@ -114,9 +114,9 @@ class CustomDataset(utils.Dataset):
         """
         info = self.image_info[image_id]
         orig_img = cv2.imread(info["path"])
-        
+
         # resized_img = cv2.resize(orig_img, (self.w, self.h))
-        
+
         return orig_img
 
     def image_reference(self, image_id):
@@ -132,29 +132,29 @@ class CustomDataset(utils.Dataset):
         """
         info = self.image_info[image_id]
         mask_path = info['mask']
-        
+
         masks = []
-        
+
         orig_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-        
+
         # resized_mask = cv2.resize(orig_mask, (self.w, self.h))
-        
+
         masks.append(orig_mask)
-        
+
         class_id = 1 # self.map_source_class_id(info['class_'])
-                
+
         class_ids = np.array([class_id])
-        
+
         mask = np.stack(masks, axis=2).astype(np.bool)
         return mask, class_ids.astype(np.int32)
 
 
 if __name__ == '__main__':
-    
+
     parser = argparse.ArgumentParser(description="Mask-RCNN custom train")
     parser.add_argument('-t', '--train', type=str, required=True, help='train folder')
     parser.add_argument('-v', '--val', type=str, required=True, help='test folder')
-    
+
     args = parser.parse_args()
 
     # Training dataset
@@ -177,7 +177,7 @@ if __name__ == '__main__':
     # Create model in training mode
     model = modellib.MaskRCNN(mode="training", config=config,
                               model_dir=MODEL_DIR)
-                              
+
     # Which weights to start with?
     init_with = "coco"  # imagenet, coco, or last
 
@@ -188,17 +188,17 @@ if __name__ == '__main__':
         # are different due to the different number of classes
         # See README for instructions to download the COCO weights
         model.load_weights(COCO_MODEL_PATH, by_name=True,
-                           exclude=["mrcnn_class_logits", "mrcnn_bbox_fc", 
+                           exclude=["mrcnn_class_logits", "mrcnn_bbox_fc",
                                     "mrcnn_bbox", "mrcnn_mask"])
     elif init_with == "last":
         # Load the last model you trained and continue training
         model.load_weights(model.find_last(), by_name=True)
-        
+
     # Train the head branches
     # Passing layers="heads" freezes all layers except the head
     # layers. You can also pass a regular expression to select
     # which layers to train by name pattern.
-    model.train(dataset_train, dataset_val, 
-                learning_rate=config.LEARNING_RATE, 
-                epochs=3, 
+    model.train(dataset_train, dataset_val,
+                learning_rate=config.LEARNING_RATE,
+                epochs=3,
                 layers='heads')
