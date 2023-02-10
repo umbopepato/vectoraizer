@@ -2,10 +2,10 @@ import numpy as np
 from matplotlib.colors import rgb2hex
 from pysvg import structure
 from pysvg import shape
-from pysvg.builders import StyleBuilder
+from vectoraizer.shapes import Rectangle
 
 classes = {
-    1: 'rect',
+    1: Rectangle.name,
     2: 'circle',
     3: 'polygon',
 }
