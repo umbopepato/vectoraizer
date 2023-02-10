@@ -1,14 +1,8 @@
 import numpy as np
 from matplotlib.colors import rgb2hex
 from pysvg import structure
-from pysvg import shape
-from vectoraizer.shapes import Rectangle
-
-classes = {
-    1: Rectangle.name,
-    2: 'circle',
-    3: 'polygon',
-}
+from pysvg import shape as svg_shape
+from vectoraizer.shapes import Rectangle, shapes_types, Ellipse
 
 def extract_color(image, x1, x2, y1, y2):
     x = int(x1 + (x2 - x1) / 2)
@@ -30,7 +24,7 @@ def result_to_svg(image, boxes, masks, class_ids):
     """
     image_height, image_width = image.shape[:2]
     svg = structure.Svg(0, 0, image_width, image_height)
-    bg = shape.Rect(0, 0, image_width, image_height)
+    bg = svg_shape.Rect(0, 0, image_width, image_height)
     bg.set_fill(extract_color(image, 0, 0, 0, 0))
     svg.addElement(bg)
 
@@ -40,28 +34,25 @@ def result_to_svg(image, boxes, masks, class_ids):
             # Skip this instance. Has no bbox. Likely lost in image cropping.
             continue
 
-        element = None
-        object_class = classes[class_ids[i]]
+        shape_class = shapes_types[class_ids[i] - 1]
         y1, x1, y2, x2 = boxes[i]
         color = extract_color(image, x1, x2, y1, y2)
-        # style = StyleBuilder()
-        # style.setFilling(color)
 
-        if object_class == 'circle':
+        if shape_class == Ellipse:
+            width = x2 - x1
+            height = y2 - y1
+            cx = x1 + width / 2
+            cy = y1 + height / 2
+            rx = width / 2
+            ry = height / 2
+            shape = shape_class(cx, cy, rx, ry)
+        else:
+            shape = shape_class(x1, y1, x2 - x1, y2 - y1)
 
-            radius = (x2 - x1) / 2
-            element = shape.Circle(x1 + radius, y1 + radius, radius)
-
-        elif object_class == 'rect':
-
-            element = shape.Rect(x1, y1, x2 - x1, y2 - y1)
-
-        elif object_class == 'polygon':
-
-            element = shape.Polygon()
+        element = shape.to_svg()
 
         if element is not None:
             element.set_fill(color)
             svg.addElement(element)
 
-    svg.save('test.svg')
+    return svg

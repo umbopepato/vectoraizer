@@ -3,14 +3,21 @@
 
 import os
 import sys
-import matplotlib.pyplot as plt
-from matplotlib import pyplot
+
 import skimage.io
-from mrcnn import utils
+
 import mrcnn.model as modellib
 from mrcnn import visualize
 from mrcnn.config import Config
 from vectoraizer.result_to_svg import result_to_svg
+from vectoraizer.shapes import shapes_types
+
+# CLI args
+weights_path = sys.argv[1]
+assert os.path.isfile(weights_path), 'Missing weights file'
+input_img_path = sys.argv[2]
+assert os.path.isfile(input_img_path), 'Missing input image file'
+output_img_path = sys.argv[3] if 3 < len(sys.argv) else None
 
 # Root directory of the project
 ROOT_DIR = os.path.abspath("./")
@@ -20,21 +27,11 @@ sys.path.append(ROOT_DIR)  # To find local version of the library
 # Directory to save logs and trained model
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
-# Local path to trained weights file
-COCO_MODEL_PATH = os.path.join(ROOT_DIR, "logs/mask_rcnn_shapes.h5")
-# Download COCO trained weights from Releases if needed
-if not os.path.exists(COCO_MODEL_PATH):
-    utils.download_trained_weights(COCO_MODEL_PATH)
-
-# Directory of images to run detection on
-IMAGE_DIR = os.path.join(ROOT_DIR, "images")
-
-
 class InferenceConfig(Config):
     NAME = "shapes"
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
-    NUM_CLASSES = 1 + 3  # background + 3 shapes
+    NUM_CLASSES = 1 + len(shapes_types)
     IMAGE_MIN_DIM = 128
     IMAGE_MAX_DIM = 128
     RPN_ANCHOR_SCALES = (8, 16, 32, 64, 128)
@@ -51,18 +48,11 @@ config.display()
 model = modellib.MaskRCNN(mode="inference", model_dir=MODEL_DIR, config=config)
 
 # Load weights
-model.load_weights(COCO_MODEL_PATH, by_name=True)
+model.load_weights(weights_path, by_name=True)
 
-# COCO Class names
-# Index of the class in the list is its ID. For example, to get ID of
-# the teddy bear class, use: class_names.index('teddy bear')
-class_names = ['BG', 'rect', 'circle', 'triangle']
+class_names = ['BG'] + list(map(lambda s: s.name, shapes_types))
 
-# Load a random image from the images folder
-file_names = next(os.walk(IMAGE_DIR))[2]
-image_path = os.path.join(IMAGE_DIR, file_names[0])
-print(image_path)
-image = skimage.io.imread(image_path)
+image = skimage.io.imread(input_img_path)
 # image = skimage.color.rgba2rgb(image)
 # pyplot.imshow(image, interpolation='nearest')
 # plt.show()
@@ -74,4 +64,6 @@ results = model.detect([image], verbose=1)
 r = results[0]
 visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
                             class_names, r['scores'])
-result_to_svg(image, r['rois'], r['masks'], r['class_ids'])
+svg = result_to_svg(image, r['rois'], r['masks'], r['class_ids'])
+
+svg.save(output_img_path or 'vectoraized.svg')
