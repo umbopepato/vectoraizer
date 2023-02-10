@@ -2,7 +2,6 @@
 datasets/
 logs/
 *.h5
-!vectoraizer.h5
 results/
 temp/
 test/
