@@ -1,27 +1,52 @@
 import numpy as np
 from matplotlib.colors import rgb2hex
-from pysvg import structure
 from pysvg import shape as svg_shape
-from vectoraizer.shapes import Rectangle, shapes_types, Ellipse
+from pysvg import structure
+
+from vectoraizer.shapes import shapes_types, Ellipse
+
 
 def extract_color(image, x1, x2, y1, y2):
     x = int(x1 + (x2 - x1) / 2)
     y = int(y1 + (y2 - y1) / 2)
     return rgb2hex(image[y, x] / 255)
 
+def boxes_should_be_switched(ba, bb, ma, mb):
+    x1 = max(ba[0], bb[0])
+    y1 = max(ba[1], bb[1])
+    x2 = min(ba[2], bb[2])
+    y2 = min(ba[3], bb[3])
+    if x2 < x1 or y2 < y1:
+        return False
+    return np.count_nonzero(ma[x1:x2, y1:y2] == True) > np.count_nonzero(mb[x1:x2, y1:y2] == True)
+
+def sort_results_3d(boxes, masks, class_ids):
+    n = len(boxes)
+    swapped = True
+    indexes = list(range(len(boxes)))
+    while swapped and n > 0:
+        swapped = False
+        for i in range(1, n):
+            if boxes_should_be_switched(boxes[indexes[i - 1]], boxes[indexes[i]], masks[:, :, indexes[i - 1]], masks[:, :, indexes[i]]):
+                tmp = indexes[i - 1]
+                indexes[i - 1] = indexes[i]
+                indexes[i] = tmp
+                swapped = True
+        n = n - 1
+    return (
+        np.array([boxes[x] for x in indexes]),
+        np.array([class_ids[x] for x in indexes]),
+    )
+
+
 def result_to_svg(image, boxes, masks, class_ids):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
     class_ids: [num_instances]
-    class_names: list of class names of the dataset
-    scores: (optional) confidence scores for each box
-    title: (optional) Figure title
-    show_mask, show_bbox: To show masks and bounding boxes or not
-    figsize: (optional) the size of the image
-    colors: (optional) An array or colors to use with each object
-    captions: (optional) A list of strings to use as captions for each object
     """
+    boxes, class_ids = sort_results_3d(boxes, masks, class_ids)
+
     image_height, image_width = image.shape[:2]
     svg = structure.Svg(0, 0, image_width, image_height)
     bg = svg_shape.Rect(0, 0, image_width, image_height)

@@ -119,6 +119,8 @@ class Ellipse(Shape):
         return canvas
 
     def to_svg(self):
+        if 1 - (min(self.rx, self.ry) / max(self.rx, self.ry)) < 0.05:
+            return svg_shape.Circle(self.cx, self.cy, self.rx)
         return svg_shape.Ellipse(self.cx, self.cy, self.rx, self.ry)
 
 
