@@ -66,4 +66,4 @@ r = results[0]
 #                             class_names, r['scores'])
 svg = result_to_svg(image, r['rois'], r['masks'], r['class_ids'])
 
-svg.save(output_img_path or 'vectoraized.svg')
+svg.save(output_img_path or os.path.splitext(input_img_path)[0] + '.svg')
