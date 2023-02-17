@@ -8,6 +8,8 @@ from pysvg import shape as svg_shape
 def random_color():
     return tuple([random.randint(0, 255) for _ in range(3)])
 
+def format_vertices(vertices):
+    return ' '.join(map(lambda v: '{},{}'.format(round(v[0], 2), round(v[1], 2)), vertices))
 
 class Shape:
     fill_color = None
@@ -169,7 +171,7 @@ class Triangle(Shape):
         return canvas
 
     def to_svg(self):
-        return svg_shape.Polygon(self.get_vertices().tolist())
+        return svg_shape.Polygon(format_vertices(self.get_vertices()))
 
 
 class Rectangle(Shape):
@@ -278,7 +280,7 @@ class Pentagon(Shape):
         return canvas
 
     def to_svg(self):
-        return svg_shape.Polygon(' '.join(map(lambda v: '{},{}'.format(round(v[0], 2), round(v[1], 2)), self.get_vertices())))
+        return svg_shape.Polygon(format_vertices(self.get_vertices()))
 
 shapes_types = [Ellipse, Triangle, Rectangle, Pentagon]
 shapes_classes = dict(map(lambda s: (s.name, s), shapes_types))
